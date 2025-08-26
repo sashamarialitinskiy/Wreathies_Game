@@ -29,7 +29,7 @@ RectTransform:
   m_GameObject: {fileID: 4463054552408473115}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 2, y: 2, z: 1}
+  m_LocalScale: {x: 2.3, y: 2.3, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -52,6 +52,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   isInWreath: 0
+  dragSortingBoost: 50
 --- !u!114 &2777152559003667398
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -144,8 +145,8 @@ SpriteRenderer:
   m_LightmapParameters: {fileID: 0}
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 1
-  m_Sprite: {fileID: 2994943217060767025, guid: 70715f9745dfd1c4b9950fe11042d281, type: 3}
+  m_SortingOrder: 10
+  m_Sprite: {fileID: 2994943217060767025, guid: 5332be43a22a94c1ea35f626896617f2, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_FlipX: 0
   m_FlipY: 0

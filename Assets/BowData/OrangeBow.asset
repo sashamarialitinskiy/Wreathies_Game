@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e96d687b7b8fab840bc893e3833bac05, type: 3}
   m_Name: OrangeBow
   m_EditorClassIdentifier: 
-  bowSprite: {fileID: 7750947355628750488, guid: 86614a7d2ca5ed143bdebd440cc817c8, type: 3}
+  bowSprite: {fileID: 1541849535014805010, guid: fb4ffd15f6c4e4666843afd610c692e0, type: 3}
   bowName: 

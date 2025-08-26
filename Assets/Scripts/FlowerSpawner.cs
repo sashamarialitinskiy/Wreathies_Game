@@ -13,26 +13,27 @@ public class FlowerSpawner : MonoBehaviour
     }
 
     [Header("Flower Settings")]
-    public List<FlowerEntry> flowerPrefabs; // e.g., Red, Blue, Green, Purple
+    public List<FlowerEntry> flowerPrefabs;   // Red, Blue, Green, Purple...
     public Transform flowerParent;
-    public List<Transform> spawnPositions;  // Should contain 24 spawn points total
+    public List<Transform> spawnPositions;    // 24 spawn points total
 
-    private List<GameObject> spawnedFlowers = new();
+    [Header("Depth Settings")]
+    [Tooltip("Z used for spawned flowers so clicks hit them before the wreath.")]
+    public float flowerZ = -0.1f;
+
+    private readonly List<GameObject> spawnedFlowers = new();
 
     private void Awake()
     {
-        // Singleton pattern so GameManager can access FlowerSpawner.Instance
-        if (Instance == null)
-            Instance = this;
-        else
-            Destroy(gameObject);
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
     }
 
     public void SpawnAllFlowers()
     {
         ClearAllFlowers();
 
-        int positionsPerColor = 6;
+        const int positionsPerColor = 6;
 
         for (int i = 0; i < flowerPrefabs.Count; i++)
         {
@@ -41,16 +42,23 @@ public class FlowerSpawner : MonoBehaviour
             for (int j = 0; j < positionsPerColor; j++)
             {
                 int index = i * positionsPerColor + j;
-
-                if (index >= spawnPositions.Count)
-                    continue;
+                if (index >= spawnPositions.Count) continue;
 
                 Transform pos = spawnPositions[index];
-                GameObject go = Instantiate(entry.prefab, pos.position, Quaternion.identity, flowerParent);
 
-                FlowerData data = go.GetComponent<FlowerData>();
-                if (data != null)
-                    data.flowerColor = entry.color;
+                // --- KEY CHANGE: force flower Z so it's in front of the wreath ---
+                Vector3 p = pos.position;
+                p.z = flowerZ;
+
+                GameObject go = Instantiate(entry.prefab, p, Quaternion.identity, flowerParent);
+
+                // Safety: if prefab messes with Z, force it again.
+                var t = go.transform;
+                t.position = new Vector3(t.position.x, t.position.y, flowerZ);
+                // ---------------------------------------------------------------
+
+                var data = go.GetComponent<FlowerData>();
+                if (data) data.flowerColor = entry.color;
 
                 spawnedFlowers.Add(go);
             }
@@ -59,12 +67,8 @@ public class FlowerSpawner : MonoBehaviour
 
     public void ClearAllFlowers()
     {
-        foreach (GameObject flower in spawnedFlowers)
-        {
-            if (flower != null)
-                Destroy(flower);
-        }
-
+        foreach (var flower in spawnedFlowers)
+            if (flower) Destroy(flower);
         spawnedFlowers.Clear();
     }
 }

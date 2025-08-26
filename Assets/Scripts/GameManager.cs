@@ -1,45 +1,56 @@
-﻿using UnityEngine;
-using UnityEngine.UI;
-using TMPro;
-using System.Collections.Generic;
+﻿using System;
 using System.Collections;
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
 
 public class GameManager : MonoBehaviour
 {
     public static GameManager Instance;
 
+    // ---------- Wreath preview ----------
     [Header("Wreath Preview")]
     public Image wreathPreviewImage;
-    public List<Sprite> levelWreathPreviews; // Assign 5 in Inspector
+    public List<Sprite> levelWreathPreviews;
 
-
+    // ---------- Client UI ---------------
     [Header("Client UI")]
-    public GameObject clientBox;
-    public TextMeshProUGUI requestText;
-    public Image clientImageDisplay;
+    public GameObject clientBox;                 // client bubble panel
+    public TextMeshProUGUI requestText;          // "Hi, I'm ___ / I want my wreath..."
+    public Image clientImageDisplay;             // portrait
     public TextMeshProUGUI clientChoicePromptText;
 
+    // ---------- Client info -------------
     [Header("Client Info")]
     public ClientData selectedClient;
     public List<ClientData> allClients;
     [HideInInspector] public ClientData clientOptionA;
     [HideInInspector] public ClientData clientOptionB;
 
+    // ---------- Round control -----------
     [Header("Round Control")]
     public int currentRound = 0;
     public int maxRounds = 10;
     public int totalSlots = 12;
     private bool retried = false;
-    private bool waitingForPostBowConfirm = false;
 
+    // ---------- Request data ------------
     [Header("Request Info")]
     public Dictionary<FlowerColor, int> requestedCounts;
 
+    // ---------- Panels ------------------
     [Header("Panels")]
     public GameObject clientChoicePanel;
     public GameObject gameOverPanel;
-    public TextMeshProUGUI feedbackText;
 
+    // ---------- Feedback bubble ----------
+    [Header("Feedback Panel (tutorial/feedback bubble)")]
+    public TextMeshProUGUI feedbackText;
+    public CanvasGroup feedbackGroup;
+    [TextArea] public string initialFeedbackMessage = "Let's see what you make!";
+
+    // ---------- Bow selection -----------
     [Header("Bow Selection")]
     public GameObject bowChoicePanel;
     public Image bowAImage;
@@ -48,16 +59,79 @@ public class GameManager : MonoBehaviour
     private BowData bowOptionA;
     private BowData bowOptionB;
 
-    private List<LevelData> levels = new List<LevelData>();
+    // ---------- FX ----------------------
+    [Header("FX")]
+    [SerializeField] private WreathCelebration wreathFX;
+    [SerializeField] private float celebrationDuration = 4f;
 
-    public enum FlowerColor { Red, Blue, Green, Purple }
+    // ---------- Tutorial / Practice -----
+    [Header("Tutorial & Practice")]
+    public int practiceRounds = 2; // first N rounds are "Practice"
+    public TextMeshProUGUI roundBadgeText;
+    public bool showRoundBadges = true;
+    public TutorialDirector tutorialDirector;
+    public ClientData tutorialClient;
+
+    [Header("Practice Options")]
+    public bool skipClientChoiceInPractice = true;
+    public ClientData forcedPracticeClient;
+
+    public bool IsPracticeRound => currentRound < practiceRounds;
+    public int VisibleRoundIndex => IsPracticeRound ? (currentRound + 1) : (currentRound + 1 - practiceRounds);
+
+    // tutorial counters
+    private int tutorialFlowerCount = 0;
+
+    private List<LevelData> levels = new();
+
+    // ---------- Flavor lines ------------
+    private static readonly string[] SUCCESS_LINES = {
+        "Perfectly arranged—every flower is just right. Thank you!",
+        "You nailed my request: the colors and flowers are spot on!",
+        "Gorgeous work! This wreath is exactly what I hoped for.",
+        "Flawless—every flower fits beautifully. I love it!"
+    };
+    private static readonly string[] RETRY_LINES = {
+        "Not quite the order I wanted—give it another go!",
+        "Close, but the flowers don’t match—try again!",
+        "Almost there! Adjust the flowers and try again!",
+        "This isn’t the right mix of flowers yet—let’s try again."
+    };
+    private static readonly string[] FINAL_ACCEPT_LINES = {
+        "Close—but not quite the wreath I asked for. I’ll still take it—thanks for trying!",
+        "Almost there! The flowers are a bit off, but I’ll go with this one.",
+        "Not exactly what I wanted, yet it still looks nice. I’ll keep it!",
+        "It’s not perfect for my order, but I appreciate the effort—I’ll take it anyway."
+    };
+    private static readonly string[] PICK_BOW_LINES = {
+        "Nice! Now let's finish with a bow.",
+        "Beautiful! Now let's add a bow.",
+        "Ooohh! Now let's add a bow."
+    };
+    private static readonly string[] BOW_PRAISE_LINES = {
+        "Awesome job!",
+        "Look at those colors!",
+        "Wowee what a wreath!",
+        "Look at you go!"
+    };
+
+    private int pickBowCycleIndex = 0;
+    private int bowPraiseCycleIndex = 0;
+
+    // guards
+    private bool clickLocked = false;
+    private bool bowChoiceScheduled = false;
+    private bool bowChoiceShownThisRound = false;
+    private bool nextClientScheduled = false;
+
+    public enum FlowerColor { Red, Blue, Yellow, Purple }
+
+    // ------------------------------------------------------------------------
 
     private void Awake()
     {
-        if (Instance == null)
-            Instance = this;
-        else
-            Destroy(gameObject);
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
     }
 
     private void Start()
@@ -65,106 +139,280 @@ public class GameManager : MonoBehaviour
         BuildLevels();
         PickTwoClients();
 
-        clientChoicePanel.SetActive(true);
-        clientBox.SetActive(false);
+        EnsureFeedbackVisible(initialFeedbackMessage);
 
         WreathZone.Instance.ClearWreath();
         FlowerSpawner.Instance.SpawnAllFlowers();
+
+        if (wreathFX == null)
+            wreathFX = UnityEngine.Object.FindFirstObjectByType<WreathCelebration>(FindObjectsInactive.Include);
+
+        ValidateBowList();
+
+        // enter first round
+        if (IsPracticeRound && skipClientChoiceInPractice)
+        {
+            selectedClient = AutoSelectPracticeClient();
+            if (clientChoicePanel) clientChoicePanel.SetActive(false);
+            if (clientBox) clientBox.SetActive(false);
+            StartNewRound();
+        }
+        else
+        {
+            if (clientChoicePanel) clientChoicePanel.SetActive(true);
+            if (clientBox) clientBox.SetActive(false);
+            if (clientChoicePromptText) clientChoicePromptText.text = "Which customer do you want to help first?";
+        }
     }
+
+    // ---------------- UI helpers (used by TutorialDirector via UnityEvents) ---
+    public void ShowClientBox(bool show = true)
+    {
+        if (clientBox) clientBox.SetActive(show);
+    }
+
+    public void ToggleRequestPanel(bool on)
+    {
+        if (requestText) requestText.gameObject.SetActive(on);
+    }
+
+    public void ToggleFeedbackPanel(bool on)
+    {
+        if (!feedbackText) return;
+        var fp = feedbackText.transform.parent;
+        if (fp) fp.gameObject.SetActive(on);
+    }
+
+    /// Show client request (used by tutorial “reveal request” step)
+    public void RevealClientRequestNow()
+    {
+        if (IsPracticeRound && selectedClient == null)
+            selectedClient = tutorialClient != null ? tutorialClient : AutoSelectPracticeClient();
+
+        ToggleFeedbackPanel(false);
+        ShowClientRequestUI();
+        ToggleRequestPanel(true);
+    }
+
+    /// Reveal request, wait briefly, then open the chooser.
+    public void RevealRequestThenOpenChoice(float holdSeconds = 1f)
+    {
+        StartCoroutine(_RevealRequestThenOpenChoice(holdSeconds));
+    }
+    private IEnumerator _RevealRequestThenOpenChoice(float holdSeconds)
+    {
+        RevealClientRequestNow();
+        yield return new WaitForSeconds(holdSeconds);
+        EndTutorialAndOpenClientChoice(true, 0f);
+    }
+
+    /// Open the client choice and move out of practice, guaranteed.
+    public void EndTutorialAndOpenClientChoice(bool skipRemainingPractice = true, float delay = 0f)
+    {
+        StartCoroutine(_EndTutorialAndOpenClientChoice(skipRemainingPractice, delay));
+    }
+    private IEnumerator _EndTutorialAndOpenClientChoice(bool skipRemainingPractice, float delay)
+    {
+        if (skipRemainingPractice)
+            currentRound = Mathf.Max(currentRound + 1, practiceRounds); // jump past practice
+
+        if (delay > 0f) yield return new WaitForSeconds(delay);
+
+        ToggleFeedbackPanel(false);
+        if (clientBox) clientBox.SetActive(false);
+
+        PickTwoClients();
+
+        if (clientChoicePanel)
+        {
+            clientChoicePanel.SetActive(true);
+            if (clientChoicePromptText)
+                clientChoicePromptText.text = "Which customer do you want to help first?";
+        }
+    }
+
+    public void ShowFeedbackLine(string message) => EnsureFeedbackVisible(message);
+
+    void EnsureFeedbackVisible(string message)
+{
+    if (!feedbackText) return;
+
+    // parent (your FeedbackPanel object)
+    var parentGO = feedbackText.transform.parent ? feedbackText.transform.parent.gameObject : null;
+
+    // 1) Make sure the whole panel is ON and in front
+    if (clientBox) clientBox.SetActive(true);
+    if (parentGO) parentGO.SetActive(true);
+    parentGO?.transform.SetAsLastSibling();   // bring to front over other UI
+
+    // 2) Force CanvasGroup back to visible (tutorial may have faded to 0)
+    var cg = feedbackGroup ? feedbackGroup : parentGO ? parentGO.GetComponent<CanvasGroup>() : null;
+    if (cg)
+    {
+        cg.alpha = 1f;
+        cg.interactable = true;     // optional
+        cg.blocksRaycasts = false;  // usually off for a speech bubble
+    }
+
+    // 3) Make sure the TMP text itself isn’t hidden
+    feedbackText.enabled = true;
+    var col = feedbackText.color; col.a = 1f; feedbackText.color = col;
+
+    // 4) Update text and flush
+    feedbackText.gameObject.SetActive(true);
+    feedbackText.text = message;
+    feedbackText.ForceMeshUpdate();
+
+    // Debug breadcrumb (remove later if you want)
+    // Debug.Log("[Feedback] Resurrected bubble and set: " + message);
+}
+
+
+    public void SetFeedback(string msg) => EnsureFeedbackVisible(msg);
 
     public void SetSelectedClient(ClientData client)
     {
         selectedClient = client;
-        Debug.Log("Selected client: " + selectedClient.clientName);
-        clientChoicePanel.SetActive(false);
+        if (clientChoicePanel) clientChoicePanel.SetActive(false);
         StartNewRound();
     }
 
-    IEnumerator WaitThenNextRound(float delay)
+    IEnumerator WaitThenShowBowChoice(float delay) { yield return new WaitForSeconds(delay); ShowBowChoice(); }
+    IEnumerator WaitThenNextClient(float delay)    { yield return new WaitForSeconds(delay); ContinueToNextClient(); }
+    IEnumerator UnlockClickAfter(float delay)      { yield return new WaitForSeconds(delay); clickLocked = false; }
+
+    // ---------------- Round lifecycle ----------------------------------------
+    public void StartNewRound()
     {
-        yield return new WaitForSeconds(delay);
-        ShowBowChoice();
+        retried = false;
+        clickLocked = false;
+        bowChoiceScheduled = false;
+        bowChoiceShownThisRound = false;
+        nextClientScheduled  = false;
+
+        tutorialFlowerCount = 0;
+
+        if (bowChoicePanel) bowChoicePanel.SetActive(false);
+        wreathFX?.Stop();
+
+        if (IsPracticeRound)
+            selectedClient = tutorialClient != null ? tutorialClient : AutoSelectPracticeClient();
+
+        requestedCounts = levels[currentRound].fixedRequest;
+
+        ShowClientRequestUI();
+        if (IsPracticeRound && clientBox) clientBox.SetActive(false); // tutorial reveals later
+
+        WreathZone.Instance.ClearWreath();
+        FlowerSpawner.Instance.SpawnAllFlowers();
+
+        if (roundBadgeText && showRoundBadges)
+        {
+            if (IsPracticeRound)
+                roundBadgeText.text = $"Practice {VisibleRoundIndex}/{practiceRounds}";
+            else
+                roundBadgeText.text = $"Round {VisibleRoundIndex}/{maxRounds - practiceRounds}";
+            roundBadgeText.gameObject.SetActive(true);
+        }
+
+        EnsureFeedbackVisible(IsPracticeRound
+            ? "Practice: drag a flower onto the wreath to begin."
+            : initialFeedbackMessage);
+
+        if (currentRound < levelWreathPreviews.Count && wreathPreviewImage != null)
+        {
+            wreathPreviewImage.sprite = levelWreathPreviews[currentRound];
+            wreathPreviewImage.gameObject.SetActive(true);
+        }
+        else if (wreathPreviewImage != null)
+        {
+            wreathPreviewImage.gameObject.SetActive(false);
+        }
+
+        GameEvents.RoundStarted?.Invoke();
+
+        if (IsPracticeRound && tutorialDirector != null)
+            tutorialDirector.Begin();
     }
 
-   public void StartNewRound()
-{
-    if (feedbackText != null)
+    /// Called by Draggable when a flower is placed.
+    public void NotifyFlowerPlaced()
     {
-        feedbackText.gameObject.SetActive(false);
-        if (feedbackText.transform.parent != null)
-            feedbackText.transform.parent.gameObject.SetActive(false);
+        tutorialFlowerCount++;
+
+        if (tutorialFlowerCount == 1)
+            GameEvents.FirstFlowerPlaced?.Invoke();   // tutorial step: "try dragging one more"
+        else if (tutorialFlowerCount == 2)
+            GameEvents.SecondFlowerPlaced?.Invoke();  // tutorial step: reveal request -> chooser
     }
 
-    retried = false;
-    requestedCounts = levels[currentRound].fixedRequest;
-    ShowClientRequestUI();
-    WreathZone.Instance.ClearWreath();
-    FlowerSpawner.Instance.SpawnAllFlowers();
-
-    // 🖼 Show wreath preview for first 5 levels (or however many you've assigned)
-    if (currentRound < levelWreathPreviews.Count && wreathPreviewImage != null)
-    {
-        wreathPreviewImage.sprite = levelWreathPreviews[currentRound];
-        wreathPreviewImage.gameObject.SetActive(true);
-    }
-    else if (wreathPreviewImage != null)
-    {
-        wreathPreviewImage.gameObject.SetActive(false);
-    }
-}
-
+    /// Back-compat: older script name
+    public void NotifyFirstFlowerPlaced() => NotifyFlowerPlaced();
 
     void ShowClientRequestUI()
     {
-        string requestStr = $"Hi, I'm {selectedClient.clientName}.\nI want my wreath:\n";
+        if (selectedClient == null)
+        {
+            if (requestText) requestText.text = "No client selected.";
+            if (clientBox) clientBox.SetActive(true);
+            return;
+        }
 
+        string requestStr = $"Hi, I'm {selectedClient.clientName}.\nI want my wreath:\n";
         foreach (var kv in requestedCounts)
         {
             string fraction = FractionFromCount(kv.Value);
             requestStr += $"- {fraction} {kv.Key}\n";
         }
+        if (requestText) requestText.text = requestStr;
 
-        requestText.text = requestStr;
+        if (clientImageDisplay) clientImageDisplay.sprite = selectedClient.clientImage;
 
-        if (clientImageDisplay != null)
-            clientImageDisplay.sprite = selectedClient.clientImage;
-
-        clientBox.SetActive(true);
+        if (clientBox) clientBox.SetActive(true);
     }
 
-    void ShowFeedback(string message)
-    {
-        if (feedbackText != null)
-        {
-            feedbackText.text = message;
-            if (feedbackText.transform.parent != null)
-                feedbackText.transform.parent.gameObject.SetActive(true);
-            feedbackText.gameObject.SetActive(true);
-        }
-        else
-        {
-            Debug.LogWarning("FeedbackText not assigned!");
-        }
-    }
+    void ShowFeedback(string message) => EnsureFeedbackVisible(message);
 
+    // ---------------- Bow choice ---------------------------------------------
     void ShowBowChoice()
     {
+        if (bowChoiceShownThisRound) return;
+
+        bowChoiceShownThisRound = true;
+        bowChoiceScheduled = false;
+
+        var pool = new List<BowData>();
+        foreach (var b in allBows)
+        {
+            if (b == null || b.bowSprite == null)
+            {
+                Debug.LogWarning("BowData missing or has no sprite.");
+                continue;
+            }
+            pool.Add(b);
+        }
+
+        if (pool.Count < 2)
+        {
+            Debug.LogError("Need at least 2 valid BowData with sprites to show choices.");
+            return;
+        }
+
+        ShuffleList(pool);
+        bowOptionA = pool[0];
+        bowOptionB = pool[1];
+
         bowChoicePanel.SetActive(true);
 
-        List<BowData> shuffled = new(allBows);
-        ShuffleList(shuffled);
+        if (bowAImage) bowAImage.sprite = bowOptionA.bowSprite;
+        if (bowBImage) bowBImage.sprite = bowOptionB.bowSprite;
 
-        bowOptionA = shuffled[0];
-        bowOptionB = shuffled[1];
-
-        bowAImage.sprite = bowOptionA.bowSprite;
-        bowBImage.sprite = bowOptionB.bowSprite;
-
-        
-        var textA = bowAImage.GetComponentInChildren<TextMeshProUGUI>(true);
-        var textB = bowBImage.GetComponentInChildren<TextMeshProUGUI>(true);
+        var textA = bowAImage ? bowAImage.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+        var textB = bowBImage ? bowBImage.GetComponentInChildren<TextMeshProUGUI>(true) : null;
         if (textA) textA.gameObject.SetActive(false);
         if (textB) textB.gameObject.SetActive(false);
+
+        EnsureFeedbackVisible(NextPickBowLine());
     }
 
     public void SelectBowA() => ApplyBowToWreath(bowOptionA);
@@ -174,23 +422,50 @@ public class GameManager : MonoBehaviour
     {
         WreathZone.Instance.AttachBow(selectedBow.bowSprite);
         bowChoicePanel.SetActive(false);
-        waitingForPostBowConfirm = true;
+
+        if (wreathFX == null)
+            wreathFX = UnityEngine.Object.FindFirstObjectByType<WreathCelebration>(FindObjectsInactive.Include);
+
+        wreathFX?.Play(celebrationDuration);
+
+        EnsureFeedbackVisible(NextBowPraiseLine());
+
+        if (nextClientScheduled) return;
+        nextClientScheduled = true;
+        StartCoroutine(WaitThenNextClient(celebrationDuration));
     }
 
+    string NextPickBowLine()
+    {
+        if (PICK_BOW_LINES.Length == 0) return "Let's add a bow!";
+        string line = PICK_BOW_LINES[pickBowCycleIndex];
+        pickBowCycleIndex = (pickBowCycleIndex + 1) % PICK_BOW_LINES.Length;
+        return line;
+    }
+
+    string NextBowPraiseLine()
+    {
+        if (BOW_PRAISE_LINES.Length == 0) return "Great job!";
+        string line = BOW_PRAISE_LINES[bowPraiseCycleIndex];
+        bowPraiseCycleIndex = (bowPraiseCycleIndex + 1) % BOW_PRAISE_LINES.Length;
+        return line;
+    }
+
+    // ---------------- Validation --------------------------------------------
     string FractionFromCount(int count)
     {
         return count switch
         {
-            6 => "1/2",
-            4 => "1/3",
-            3 => "1/4",
-            2 => "1/6",
-            1 => "1/12",
-            8 => "2/3",
-            9 => "3/4",
+            6  => "1/2",
+            4  => "1/3",
+            3  => "1/4",
+            2  => "1/6",
+            1  => "1/12",
+            8  => "2/3",
+            9  => "3/4",
             10 => "5/6",
             12 => "all",
-            _ => $"{count}/12"
+            _  => $"{count}/12"
         };
     }
 
@@ -199,41 +474,51 @@ public class GameManager : MonoBehaviour
         levels = new List<LevelData>
         {
             new(new Dictionary<FlowerColor, int> { { FlowerColor.Red, 6 }, { FlowerColor.Blue, 6 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Green, 6 }, { FlowerColor.Blue, 6 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Yellow, 6 }, { FlowerColor.Blue, 6 } }),
             new(new Dictionary<FlowerColor, int> { { FlowerColor.Purple, 4 }, { FlowerColor.Red, 4 }, { FlowerColor.Blue, 4 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Green, 4 }, { FlowerColor.Purple, 8 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Red, 3 }, { FlowerColor.Purple, 3 }, { FlowerColor.Blue, 3 }, { FlowerColor.Green, 3 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Blue, 2 }, { FlowerColor.Red, 10 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Green, 8 }, { FlowerColor.Purple, 2 }, { FlowerColor.Red, 2 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Green, 3 }, { FlowerColor.Red, 3 }, { FlowerColor.Purple, 6 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Purple, 6 }, { FlowerColor.Red, 2 }, { FlowerColor.Blue, 2 }, { FlowerColor.Green, 2 } }),
-            new(new Dictionary<FlowerColor, int> { { FlowerColor.Green, 2 }, { FlowerColor.Blue, 2 }, { FlowerColor.Purple, 8 } })
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Yellow, 2 }, { FlowerColor.Purple, 4 }, { FlowerColor.Red, 4 }, { FlowerColor.Blue, 2 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Red, 3 }, { FlowerColor.Purple, 3 }, { FlowerColor.Blue, 3 }, { FlowerColor.Yellow, 3 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Red, 4 }, { FlowerColor.Blue, 4 }, { FlowerColor.Yellow, 4 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Blue, 3 }, { FlowerColor.Red, 3 }, { FlowerColor.Purple, 3 }, { FlowerColor.Yellow, 3 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Purple, 6 }, { FlowerColor.Red, 3 }, { FlowerColor.Blue, 3 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Yellow, 4 }, { FlowerColor.Purple, 4 }, { FlowerColor.Red, 2 }, { FlowerColor.Blue, 2 } }),
+            new(new Dictionary<FlowerColor, int> { { FlowerColor.Blue, 4 }, { FlowerColor.Red, 3 }, { FlowerColor.Purple, 3 }, { FlowerColor.Yellow, 2 } }),
         };
     }
 
     public void DoneButtonPressed()
     {
-        if (waitingForPostBowConfirm)
-        {
-            waitingForPostBowConfirm = false;
-            ContinueToNextClient();
-            return;
-        }
+        if (bowChoiceScheduled || bowChoiceShownThisRound) return;
+        if (clickLocked) return;
+        clickLocked = true;
 
-        if (ValidateWreath())
+        bool valid = ValidateWreath();
+
+        if (valid)
         {
             ShowClientSuccess();
-            StartCoroutine(WaitThenNextRound(2f));
+
+            if (!bowChoiceScheduled && !bowChoiceShownThisRound)
+            {
+                bowChoiceScheduled = true;
+                StartCoroutine(WaitThenShowBowChoice(2f));
+            }
         }
         else if (!retried)
         {
             retried = true;
-            ShowFeedback("Hmm... this isn’t what I asked for. Try again.");
+            ShowFeedback(Pick(RETRY_LINES));
+            StartCoroutine(UnlockClickAfter(0.25f));
         }
         else
         {
             ShowClientFinalReaction();
-            StartCoroutine(WaitThenNextRound(2f));
+
+            if (!bowChoiceScheduled && !bowChoiceShownThisRound)
+            {
+                bowChoiceScheduled = true;
+                StartCoroutine(WaitThenShowBowChoice(2f));
+            }
         }
     }
 
@@ -264,71 +549,115 @@ public class GameManager : MonoBehaviour
         return totalPlaced == totalSlots;
     }
 
-    void ShowClientSuccess() => ShowFeedback("Wow, that’s beautiful! Thank you.");
-    void ShowClientFinalReaction() => ShowFeedback("This isn’t quite right, but I’ll take it anyway.");
-
-    void NextRound() => ContinueToNextClient();
+    void ShowClientSuccess()       => ShowFeedback(Pick(SUCCESS_LINES));
+    void ShowClientFinalReaction() => ShowFeedback(Pick(FINAL_ACCEPT_LINES));
+    string Pick(string[] lines)    => lines[UnityEngine.Random.Range(0, lines.Length)];
 
     void ShuffleList<T>(List<T> list)
-{
-    for (int i = list.Count - 1; i > 0; i--)
     {
-        int j = Random.Range(0, i + 1);
-        (list[i], list[j]) = (list[j], list[i]);
+        for (int i = list.Count - 1; i > 0; i--)
+        {
+            int j = UnityEngine.Random.Range(0, i + 1);
+            (list[i], list[j]) = (list[j], list[i]);
+        }
     }
-}
-
 
     void PickTwoClients()
-{
-    if (allClients.Count < 2)
     {
-        Debug.LogError("Not enough clients in the list!");
-        return;
+        if (allClients == null || allClients.Count == 0)
+        {
+            Debug.LogError("No clients configured in GameManager.allClients!");
+            return;
+        }
+
+        if (allClients.Count == 1)
+        {
+            clientOptionA = allClients[0];
+            clientOptionB = allClients[0];
+            return;
+        }
+
+        List<ClientData> shuffled = new(allClients);
+        ShuffleList(shuffled);
+
+        clientOptionA = shuffled[0];
+        clientOptionB = shuffled[1];
+
+        if (clientChoicePromptText)
+        {
+            clientChoicePromptText.text = (currentRound == 0)
+                ? "Which customer do you want to help first?"
+                : "Which customer do you want to help next?";
+        }
     }
-
-    List<ClientData> shuffled = new(allClients);
-    ShuffleList(shuffled);
-
-    clientOptionA = shuffled[0];
-    clientOptionB = shuffled[1];
-
-    // Set client choice prompt based on current round
-    if (clientChoicePromptText != null)
-    {
-        if (currentRound == 0)
-            clientChoicePromptText.text = "Which customer do you want to help first?";
-        else
-            clientChoicePromptText.text = "Which customer do you want to help next?";
-    }
-}
-
 
     void ContinueToNextClient()
     {
         currentRound++;
+
         if (currentRound >= maxRounds)
         {
-            Debug.Log("Game Over!");
-            gameOverPanel.SetActive(true);
+            if (gameOverPanel) gameOverPanel.SetActive(true);
+            EnsureFeedbackVisible("Great work—shop closed for today!");
+            return;
+        }
+
+        PickTwoClients();
+
+        if (IsPracticeRound && skipClientChoiceInPractice)
+        {
+            selectedClient = AutoSelectPracticeClient();
+            if (clientChoicePanel) clientChoicePanel.SetActive(false);
+            if (clientBox) clientBox.SetActive(false);
+            StartNewRound();
         }
         else
         {
-            PickTwoClients();
-            clientChoicePanel.SetActive(true);
-            clientBox.SetActive(false);
+            if (clientChoicePanel) clientChoicePanel.SetActive(true);
+            if (clientBox) clientBox.SetActive(false);
+            EnsureFeedbackVisible("Choose your next customer!");
         }
     }
+
+    ClientData AutoSelectPracticeClient()
+    {
+        if (forcedPracticeClient != null) return forcedPracticeClient;
+        if (clientOptionA != null) return clientOptionA;
+        if (allClients != null && allClients.Count > 0) return allClients[0];
+        return null;
+    }
+
+    void ValidateBowList()
+    {
+        for (int i = 0; i < allBows.Count; i++)
+        {
+            var b = allBows[i];
+            if (b == null) Debug.LogWarning($"allBows[{i}] is NULL.");
+            else if (b.bowSprite == null) Debug.LogWarning($"BowData '{b.name}' has NO sprite assigned.");
+        }
+    }
+
+    // Fallback if the tutorial ends without calling our chooser functions.
+    public void OnTutorialFinished()
+    {
+        if (clientChoicePanel && !clientChoicePanel.activeInHierarchy)
+            EndTutorialAndOpenClientChoice(true, 0f);
+    }
 }
+
+// ------------------------------------------------------------
 
 [System.Serializable]
 public class LevelData
 {
     public Dictionary<GameManager.FlowerColor, int> fixedRequest;
-
-    public LevelData(Dictionary<GameManager.FlowerColor, int> request)
-    {
-        fixedRequest = request;
-    }
+    public LevelData(Dictionary<GameManager.FlowerColor, int> request) { fixedRequest = request; }
 }
 
+// Keep this at the very end of the file.
+public static class GameEvents
+{
+    public static Action RoundStarted;
+    public static Action FirstFlowerPlaced;
+    public static Action SecondFlowerPlaced;
+}

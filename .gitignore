@@ -6,4 +6,13 @@
 [Ll]ogs/
 [Mm]emoryCaptures/
 UserSettings/
-.vscode/
+.vs/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj

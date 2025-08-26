@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e96d687b7b8fab840bc893e3833bac05, type: 3}
   m_Name: PinkBow
   m_EditorClassIdentifier: 
-  bowSprite: {fileID: -2857126753266026853, guid: 514084c8f5fe7094480a3b89f4fe92b5, type: 3}
+  bowSprite: {fileID: 1386973945852617270, guid: 0be0658a60c394eb8884765de998ebde, type: 3}
   bowName: 

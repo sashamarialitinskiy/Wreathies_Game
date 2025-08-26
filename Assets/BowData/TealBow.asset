@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e96d687b7b8fab840bc893e3833bac05, type: 3}
   m_Name: TealBow
   m_EditorClassIdentifier: 
-  bowSprite: {fileID: 6552238865435443343, guid: 879059dff60334946b44fb691923fedd, type: 3}
+  bowSprite: {fileID: -2900350911689438719, guid: 270d14eddf5764802bbea50cc1ff7ccf, type: 3}
   bowName: 

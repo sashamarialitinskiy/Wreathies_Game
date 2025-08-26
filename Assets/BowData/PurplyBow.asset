@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e96d687b7b8fab840bc893e3833bac05, type: 3}
   m_Name: PurplyBow
   m_EditorClassIdentifier: 
-  bowSprite: {fileID: 1541849535014805010, guid: 87896aec1804d9b4383b0e5d62040ec5, type: 3}
+  bowSprite: {fileID: 7750947355628750488, guid: dd6cab280e7a64c97b9970278f29862a, type: 3}
   bowName: 

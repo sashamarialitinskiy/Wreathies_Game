@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e96d687b7b8fab840bc893e3833bac05, type: 3}
   m_Name: YellowBow
   m_EditorClassIdentifier: 
-  bowSprite: {fileID: -7932965470368890763, guid: 63a4ac55866cc7940aadeebd07be878d, type: 3}
+  bowSprite: {fileID: -8689592378835330048, guid: a7b3371743a054f5f9faf914c732b76b, type: 3}
   bowName: 

@@ -3,26 +3,36 @@ using UnityEngine;
 [RequireComponent(typeof(Collider2D))]
 public class Draggable : MonoBehaviour
 {
-    private Vector3 offset;
-    private bool isDragging = false;
     private Camera mainCamera;
+    private Vector3 offset;
+    private bool isDragging;
 
+    [Header("State")]
     public bool isInWreath = false;
 
-    void Start()
+    [Header("Visuals")]
+    [SerializeField] private int dragSortingBoost = 50;   // bring to front while dragging
+    private SpriteRenderer sr;
+    private int originalOrder;
+
+    private void Awake()
     {
-        mainCamera = Camera.main;
+        sr = GetComponentInChildren<SpriteRenderer>();
     }
 
-    void Update()
+    private void Start()
     {
-        Vector3 pointerPosition = Vector3.zero;
+        mainCamera = Camera.main;
+        if (!mainCamera)
+            Debug.LogWarning("[Draggable] No Camera.main found.");
+    }
 
-        // Desktop input
+    private void Update()
+    {
+        // ----- Mouse -----
         if (Input.GetMouseButtonDown(0))
         {
-            pointerPosition = Input.mousePosition;
-            TryStartDrag(pointerPosition);
+            TryStartDrag(Input.mousePosition);
         }
         else if (Input.GetMouseButton(0) && isDragging)
         {
@@ -33,25 +43,24 @@ public class Draggable : MonoBehaviour
             EndDrag();
         }
 
-        // Touch input
+        // ----- Touch -----
         if (Input.touchCount > 0)
         {
-            Touch touch = Input.GetTouch(0);
-            pointerPosition = touch.position;
-
-            switch (touch.phase)
+            Touch t = Input.GetTouch(0);
+            switch (t.phase)
             {
                 case TouchPhase.Began:
-                    TryStartDrag(pointerPosition);
+                    TryStartDrag(t.position);
                     break;
+
                 case TouchPhase.Moved:
                 case TouchPhase.Stationary:
-                    if (isDragging)
-                        DragTo(pointerPosition);
+                    if (isDragging) DragTo(t.position);
                     break;
+
                 case TouchPhase.Ended:
                 case TouchPhase.Canceled:
-                    EndDrag();
+                    if (isDragging) EndDrag();
                     break;
             }
         }
@@ -59,41 +68,71 @@ public class Draggable : MonoBehaviour
 
     private void TryStartDrag(Vector3 screenPosition)
     {
-        Vector2 worldPos = mainCamera.ScreenToWorldPoint(screenPosition);
-        Collider2D hit = Physics2D.OverlapPoint(worldPos);
+        if (!mainCamera) return;
 
-        if (hit != null && hit.gameObject == gameObject)
+        Vector3 world = mainCamera.ScreenToWorldPoint(screenPosition);
+        Vector2 point = (Vector2)world;
+
+        // Check every collider under the pointer (important when overlapping the wreath/other flowers)
+        Collider2D[] hits = Physics2D.OverlapPointAll(point);
+        foreach (var h in hits)
         {
-            isDragging = true;
-            offset = transform.position - (Vector3)worldPos;
+            if (h && h.gameObject == gameObject)
+            {
+                // If we’re picking it up from the wreath, free it first.
+                if (isInWreath && WreathZone.Instance != null)
+                {
+                    isInWreath = false;
+                    WreathZone.Instance.RemoveFlower(gameObject);
+                }
+
+                isDragging = true;
+                offset = transform.position - world;
+
+                // bring to front
+                if (sr)
+                {
+                    originalOrder = sr.sortingOrder;
+                    sr.sortingOrder = originalOrder + dragSortingBoost;
+                }
+                return;
+            }
         }
     }
 
     private void DragTo(Vector3 screenPosition)
     {
-        Vector2 worldPos = mainCamera.ScreenToWorldPoint(screenPosition);
-        transform.position = worldPos + (Vector2)offset;
+        if (!mainCamera) return;
+
+        Vector3 world = mainCamera.ScreenToWorldPoint(screenPosition);
+        Vector3 target = world + offset;
+        target.z = transform.position.z; // keep original Z in 2D
+        transform.position = target;
     }
 
     private void EndDrag()
     {
         isDragging = false;
 
-        // Check if inside the wreath zone
+        // restore draw order
+        if (sr) sr.sortingOrder = originalOrder;
+
+        // Check if dropped inside wreath
         if (WreathZone.Instance != null)
         {
-            bool wasInWreath = isInWreath;
-            isInWreath = WreathZone.Instance.IsInsideWreath(transform.position);
-
-            if (isInWreath && !wasInWreath)
+            bool inside = WreathZone.Instance.IsInsideWreath(transform.position);
+            if (inside)
             {
+                isInWreath = true;
                 WreathZone.Instance.AddFlower(gameObject);
+
+                // Notify tutorial (fires once per round via GameManager guard)
+                GameManager.Instance?.NotifyFirstFlowerPlaced();
             }
-            else if (!isInWreath && wasInWreath)
+            else
             {
-                WreathZone.Instance.RemoveFlower(gameObject);
+                isInWreath = false;
             }
         }
     }
 }
-
