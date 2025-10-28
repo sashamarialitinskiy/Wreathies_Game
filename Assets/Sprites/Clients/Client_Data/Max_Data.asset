@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Max_Data
   m_EditorClassIdentifier: 
   clientName: Max
-  clientImage: {fileID: 2606193311958461929, guid: 8445f86f15600d2409d8f11dbe1846c8, type: 3}
+  clientImage: {fileID: 2606193311958461929, guid: ba4e790efdb974830a7efd40a5fe2105, type: 3}

@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Sasha_Data
   m_EditorClassIdentifier: 
   clientName: Sasha
-  clientImage: {fileID: -887032487745429282, guid: 1eaa3880aa6b3d54382926dd0f3d9442, type: 3}
+  clientImage: {fileID: -887032487745429282, guid: 74d71512fa5b741eb9c19df6f36e7192, type: 3}

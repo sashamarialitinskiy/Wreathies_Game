@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Maya_Data
   m_EditorClassIdentifier: 
   clientName: Maya
-  clientImage: {fileID: -52697938039961796, guid: 9053f6660c293c64fbf9299dc76fe99b, type: 3}
+  clientImage: {fileID: -52697938039961796, guid: 7277cb3db55ba47ff9cf7b84ec1f2375, type: 3}

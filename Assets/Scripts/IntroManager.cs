@@ -2,278 +2,461 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
 
 public class IntroManager : MonoBehaviour
 {
+    public enum Transition { Fade, Pop, Instant }
+
+    // ---------- Slides ----------
     [Header("Slides (in order)")]
-    public List<GameObject> introPanels = new List<GameObject>();   // IntroPanel_Start, IntroPanel_Flowers1, ...
+    public List<GameObject> introPanels = new();   // 0 = title (Play), 1..N = content
 
-    [Header("Optional UI")]
-    public UnityEngine.UI.Button backButton;
+    // ---------- Intro navigation ONLY ----------
+    [Header("Navigation UI (INTRO ONLY)")]
+    [Tooltip("Parent that holds the INTRO arrows (NOT the tutorial ones).")]
+    public GameObject navRoot;          // e.g. Canvas/IntroNavRoot
+    public Button backButton;           // e.g. Backbutton
+    public Button nextButton;           // e.g. Nextbutton
 
+    // ---------- Background (optional) ----------
     [Header("Background (optional)")]
-    public Image backgroundTarget;              // IntroBackground image
+    public Image backgroundTarget;
 
-    [Header("Autoplay")]
-    public bool autoPlay = true;
-    public bool resetToFirstOnEnable = true;
-    public bool loop = false;
+    // ---------- Behaviour ----------
+    [Header("Behaviour")]
+    [Tooltip("Hide Back/Next on the very first (title) slide.")]
+    public bool hideNavOnFirstSlide = true;
 
-    [Header("Finish Behaviour")]
-    public bool goStraightToPractice = true;    // if false, you can show a menu instead
+    [Tooltip("Disable Next button when you're on the last slide.")]
+    public bool disableNextOnLastSlide = false;
 
+    [Tooltip("Index of the first CONTENT slide (shown after Play). Usually 1.")]
+    public int firstContentSlideIndex = 1;
+
+    // ---------- Global ----------
     [Header("Global Overrides")]
-    public bool disableAllTypewriter = true;    // you said no typing
+    public bool disableAllTypewriter = true;
     public bool debugLogs = false;
 
-    // ---- Per-slide settings -------------------------------------------------
+    // ---------- Fallback transitions ----------
+    [Header("Default Transition (no SubMessageSequence)")]
+    public Transition defaultIn  = Transition.Pop;
+    public Transition defaultOut = Transition.Instant;
+
+    [Header("Pop settings")]
+    public float popDuration = 0.18f;
+    public float popInScale  = 1.08f;
+    public float popOutScale = 0.92f;
+
+    [Header("Sequential reveal (no SubMessageSequence)")]
+    public float childStagger = 0.15f;
+
+    // ---------- Per-slide config ----------
     [System.Serializable]
     public class Slide
     {
-        [Header("References (leave empty to auto-discover)")]
-        public GameObject root;                 // defaults to introPanels[i]
-        public Sprite background;               // optional per-slide bg
-        public Transform textGroup;             // child named "TextGroup"
+        public GameObject root;
+        public Sprite background;
 
-        [Header("Sequence inside TextGroup")]
-        [Tooltip("Play each direct child of TextGroup as a step.")]
-        public bool useSubMessages = true;
+        [Header("Message group (optional)")]
+        public Transform textGroup;     // parent with CanvasGroups or SubMessageSequence
+        public float fadeIn = 0.2f;     // used if defaultIn == Fade
+        public float hold   = 0f;
+        public float fadeOut= 0f;       // used if defaultOut == Fade
 
-        [Tooltip("These are shown from the start and left on (e.g. Panel, Fractions).")]
-        public List<string> persistentNames = new List<string>();
+        [Header("Minimum slide time")]
+        public float minTotalDuration = 0.0f;
 
-        [Tooltip("Keep messages ON screen after they play (accumulate).")]
-        public bool messagesStayVisible = false;
-
-        [Tooltip("If not empty, only these names will stay visible (others still fade).")]
-        public List<string> accumulateNames = new List<string>();
-
-        [Header("Message Timing (fade only)")]
-        public float msgFadeIn  = 0.2f;
-        public float msgHold    = 1.0f;
-        public float msgFadeOut = 0.2f;
-
-        [Header("Typewriter (ignored if globally disabled)")]
-        public bool  typewriter = false;
-        public float charDelay  = 0.02f;
-
-        [Header("Persistent (optional)")]
-        public float persistentFadeIn  = 0.15f;
-        public bool  fadeOutPersistentAtEnd = false;
-
-        [Header("Slide Duration (failsafe)")]
-        public float minTotalDuration = 3f;
+        [Header("Exclusive sequence (one-at-a-time)")]
+        public Transform exclusiveSequenceGroup; // children with CanvasGroup
+        public float seqFadeIn  = 0.25f;
+        public float seqHold    = 0.90f;
+        public float seqFadeOut = 0.25f;
     }
 
-    [Header("Per-Slide Settings (same order as introPanels)")]
-    public List<Slide> slides = new List<Slide>();
+    [Header("Per-Slide Settings (same order as panels)")]
+    public List<Slide> slides = new();
 
-    // ---- runtime ------------------------------------------------------------
-    int currentIndex = 0;
+    // ---------- Handoff to Tutorial ----------
+    [Header("Handoff to Tutorial")]
+    [Tooltip("Drag your TutorialDirector here. We'll call Begin() when the intro finishes.")]
+    public TutorialDirector tutorial;
+    public bool startTutorialOnFinish = true;
+
+    // ---------- Runtime ----------
+    int currentIndex = 0;   // starts at title (0)
     Coroutine runner;
-    bool skipRequested;
+    bool skipping;
 
+    // Debounce lock to prevent double-advance on a single click
+    bool _nextLocked;
+    [Tooltip("How long to ignore extra Next clicks (seconds).")]
+    public float nextDebounceSeconds = 0.12f;
+
+    // ========================================================================
+    // Lifecycle
+    // ========================================================================
     void OnEnable()
     {
-        if (resetToFirstOnEnable) currentIndex = 0;
+        EnsureSlidesCount();
+        currentIndex = Mathf.Clamp(currentIndex, 0, Mathf.Max(0, introPanels.Count - 1));
         ShowOnlyCurrentPanel();
-        UpdateBack();
-        if (autoPlay) StartCurrentSlide();
+        WireNav();
+        UpdateNavState();
+        UpdateNavVisibility();
+
+        if (debugLogs)
+        {
+            var count = FindObjectsOfType<IntroManager>(true).Length;
+            Debug.Log($"[Intro] Enabled on {name}. Active IntroManagers in scene: {count}");
+        }
     }
 
-    void Start()
+    void OnDisable()
     {
-        ShowOnlyCurrentPanel();
-        UpdateBack();
-        if (autoPlay && runner == null) StartCurrentSlide();
+        UnwireNav();
+        StopRunner();
     }
 
+    // ========================================================================
+    // Play button on slide 0
+    // ========================================================================
+    public void OnPlayClicked()
+    {
+        if (debugLogs) Debug.Log("[Intro] Play");
+        BeginFrom(firstContentSlideIndex);
+    }
+
+    // ========================================================================
+    // Manual navigation (intro arrows)
+    // ========================================================================
     public void BackSlide()
     {
         StopRunner();
-        if (currentIndex > 0)
-        {
-            currentIndex--;
-            ShowOnlyCurrentPanel();
-            UpdateBack();
-            if (autoPlay) StartCurrentSlide();
-        }
+        if (currentIndex > 0) currentIndex--;
+        if (debugLogs) Debug.Log($"[Intro] Back → {currentIndex}");
+        ShowOnlyCurrentPanel();
+        UpdateNavState();
+        UpdateNavVisibility();
+        StartCurrentSlide();
     }
 
     public void NextSlide()
     {
+        if (_nextLocked) return;                       // <<< debounce
+        StartCoroutine(_NextDebounced());
+    }
+
+    IEnumerator _NextDebounced()
+    {
+        _nextLocked = true;
+        if (nextButton) nextButton.interactable = false;
+
         StopRunner();
         if (currentIndex < introPanels.Count - 1)
         {
             currentIndex++;
+            if (debugLogs) Debug.Log($"[Intro] Next → {currentIndex}");
             ShowOnlyCurrentPanel();
-            UpdateBack();
-            if (autoPlay) StartCurrentSlide();
+            UpdateNavState();
+            UpdateNavVisibility();
+            StartCurrentSlide();
         }
         else
         {
+            if (debugLogs) Debug.Log("[Intro] Finished → handoff");
             FinishIntro();
         }
+
+        yield return new WaitForSecondsRealtime(Mathf.Max(0.06f, nextDebounceSeconds));
+        _nextLocked = false;
+        if (nextButton) nextButton.interactable = true;
     }
 
-    public void SkipCurrent() => skipRequested = true;
+    public void BeginFrom(int startIndex)
+    {
+        StopRunner();
+        currentIndex = Mathf.Clamp(startIndex, 0, Mathf.Max(0, introPanels.Count - 1));
+        if (debugLogs) Debug.Log($"[Intro] BeginFrom({currentIndex})");
+        ShowOnlyCurrentPanel();
+        UpdateNavState();
+        UpdateNavVisibility();
+        StartCurrentSlide();
+    }
 
-    // ------------------------------------------------------------------------
-    void StartCurrentSlide() => runner = StartCoroutine(RunSlide(currentIndex));
+    // ========================================================================
+    // Slide runner (no auto-advance)
+    // ========================================================================
+    void StartCurrentSlide()
+    {
+        if (runner != null) StopCoroutine(runner);
+        runner = StartCoroutine(RunSlide(currentIndex));
+    }
 
     void StopRunner()
     {
-        skipRequested = true;
+        skipping = true;
         if (runner != null) StopCoroutine(runner);
         runner = null;
+        skipping = false;
     }
 
     IEnumerator RunSlide(int index)
     {
-        yield return null; // let activation settle
-        skipRequested = false;
+        yield return null; // settle
+        skipping = false;
 
         if (index < 0 || index >= introPanels.Count) yield break;
-        EnsureSlidesCount();
-
-        Slide s = slides[index];
+        var s = slides[index];
         if (!s.root) s.root = introPanels[index];
         if (!s.root) yield break;
 
         if (backgroundTarget && s.background) backgroundTarget.sprite = s.background;
 
-        if (!s.textGroup)
+        bool handled = false;
+
+        // 1) Exclusive sequence (optional)
+        if (s.exclusiveSequenceGroup)
         {
-            var tg = FindChildByName(s.root.transform, "TextGroup");
-            if (tg) s.textGroup = tg;
+            yield return PlayExclusiveSequence(s);
+            handled = true;
         }
 
-        float slideStart = Time.unscaledTime;
-
-        if (s.useSubMessages && s.textGroup)
+        // 2) SubMessageSequence path (optional)
+        if (!handled && s.textGroup)
         {
-            // persistent defaults (useful names you had)
-            HashSet<string> persistSet = new HashSet<string>(s.persistentNames);
-            persistSet.Add("Panel");
-            persistSet.Add("Fractions");
-
-            // collect direct children
-            List<Transform> children = new List<Transform>();
-            foreach (Transform c in s.textGroup) children.Add(c);
-
-            // partition
-            List<CanvasGroup> persistent = new List<CanvasGroup>();
-            List<CanvasGroup> messages   = new List<CanvasGroup>();
-
-            foreach (var t in children)
+            var seq = s.textGroup.GetComponent<SubMessageSequence>();
+            if (seq != null && seq.messages != null && seq.messages.Count > 0)
             {
-                if (persistSet.Contains(t.name)) persistent.Add(EnsureCanvasGroup(t.gameObject));
-                else                              messages.Add(EnsureCanvasGroup(t.gameObject));
+                seq.playOnEnable = false;
+                if (disableAllTypewriter) seq.useTypewriter = false;
+
+                foreach (var g in seq.messages)
+                {
+                    if (!g) continue;
+                    g.alpha = 0f;
+                    g.transform.localScale = Vector3.one;
+                    g.gameObject.SetActive(false);
+                }
+
+                float startAt = Time.unscaledTime;
+                yield return StartCoroutine(seq.Play());
+
+                float elapsed = Time.unscaledTime - startAt;
+                float remain = s.minTotalDuration - elapsed;
+                if (remain > 0f) yield return HoldOrSkip(remain);
+
+                handled = true;
             }
-
-            // init alpha
-            foreach (var g in persistent) SetGroupAlpha(g, 0f);
-            foreach (var g in messages)   SetGroupAlpha(g, 0f);
-
-            // fade in persistent once
-            foreach (var g in persistent)
-                yield return FadeTo(g, 1f, s.persistentFadeIn);
-
-            // log
-            if (debugLogs)
-                Debug.Log($"[Intro] Slide {index} '{s.root.name}': {messages.Count} messages, {persistent.Count} persistent.", s.root);
-
-            // sequence all messages
-            for (int i = 0; i < messages.Count && !skipRequested; i++)
-            {
-                var g = messages[i];
-
-                // fade in
-                yield return FadeTo(g, 1f, s.msgFadeIn);
-
-                // typewriter (skip if globally disabled)
-                if (!disableAllTypewriter && s.typewriter)
-                    yield return TypewriterReveal(g.transform, s.charDelay);
-
-                // hold
-                yield return HoldOrSkip(s.msgHold);
-
-                // keep or fade
-                bool keepThis =
-                    s.messagesStayVisible &&
-                    (s.accumulateNames == null || s.accumulateNames.Count == 0 || s.accumulateNames.Contains(g.name));
-
-                if (!keepThis)
-                    yield return FadeTo(g, 0f, s.msgFadeOut);
-                // else: leave alpha at 1 so it accumulates
-            }
-
-            // optional clean-up of persistent
-            if (s.fadeOutPersistentAtEnd)
-                for (int i = 0; i < persistent.Count; i++)
-                    yield return FadeTo(persistent[i], 0f, 0.12f);
-        }
-        else
-        {
-            // nothing to play, just wait a bit so you see something
-            yield return HoldOrSkip(Mathf.Max(1f, s.minTotalDuration));
         }
 
-        // enforce minimum slide time
-        if (!skipRequested && s.minTotalDuration > 0f)
-        {
-            float elapsed = Time.unscaledTime - slideStart;
-            float remain = Mathf.Max(0f, s.minTotalDuration - elapsed);
-            if (remain > 0f) yield return HoldOrSkip(remain);
-        }
+        // 3) Fallback: simple sequential reveal of CanvasGroups
+        if (!handled) yield return ShowSequential(s);
 
-        // advance
-        if (!skipRequested)
-        {
-            if (currentIndex < introPanels.Count - 1) NextSlide();
-            else if (loop) { currentIndex = 0; ShowOnlyCurrentPanel(); UpdateBack(); StartCurrentSlide(); }
-            else FinishIntro();
-        }
+        // STOP — user uses Next/Back to change slides.
     }
 
-    // ---- helpers ------------------------------------------------------------
-    void ShowOnlyCurrentPanel()
-    {
-        for (int i = 0; i < introPanels.Count; i++)
-            if (introPanels[i]) introPanels[i].SetActive(i == currentIndex);
-    }
-
-    void UpdateBack()
-    {
-        if (backButton) backButton.interactable = (currentIndex > 0);
-    }
-
+    // ========================================================================
+    // Finish → TutorialDirector.Begin()
+    // ========================================================================
     void FinishIntro()
     {
         StopRunner();
         foreach (var p in introPanels) if (p) p.SetActive(false);
+        SetNavVisible(false);
 
-        if (goStraightToPractice && GameManager.Instance)
+        if (startTutorialOnFinish && tutorial)
         {
-            // jump into practice flow
-            if (GameManager.Instance.clientChoicePanel)
-                GameManager.Instance.clientChoicePanel.SetActive(false);
-            GameManager.Instance.currentRound = 0;   // start at round 0
-            GameManager.Instance.SetFeedback("Practice: drag a flower onto the wreath to begin.");
-            GameManager.Instance.StartNewRound();
+            tutorial.Begin();     // <<< handoff to your TutorialDirector
         }
 
         gameObject.SetActive(false);
     }
 
+    // ========================================================================
+    // UI helpers
+    // ========================================================================
+    void ShowOnlyCurrentPanel()
+    {
+        for (int i = 0; i < introPanels.Count; i++)
+            if (introPanels[i]) introPanels[i].SetActive(i == currentIndex);
+
+        if (debugLogs)
+            Debug.Log($"[Intro] Showing slide {currentIndex}: {introPanels[currentIndex]?.name}");
+    }
+
+    void WireNav()
+    {
+        AutoFindButtonsIfNeeded();
+
+        if (backButton)
+        {
+            backButton.onClick.RemoveAllListeners();
+            backButton.onClick.AddListener(BackSlide);
+        }
+        if (nextButton)
+        {
+            nextButton.onClick.RemoveAllListeners();
+            nextButton.onClick.AddListener(NextSlide);
+        }
+    }
+
+    void UnwireNav()
+    {
+        if (backButton) backButton.onClick.RemoveAllListeners();
+        if (nextButton) nextButton.onClick.RemoveAllListeners();
+    }
+
+    void UpdateNavState()
+    {
+        if (backButton) backButton.interactable = (currentIndex > 0);
+
+        if (nextButton)
+        {
+            bool isLast = (currentIndex >= introPanels.Count - 1);
+            nextButton.interactable = !(disableNextOnLastSlide && isLast);
+        }
+    }
+
+    void UpdateNavVisibility()
+    {
+        bool onTitle = (currentIndex == 0);
+        bool show = !(hideNavOnFirstSlide && onTitle);
+        SetNavVisible(show);
+    }
+
+    void SetNavVisible(bool visible)
+    {
+        if (navRoot) navRoot.SetActive(visible);
+        else
+        {
+            if (backButton) backButton.gameObject.SetActive(visible);
+            if (nextButton) nextButton.gameObject.SetActive(visible);
+        }
+    }
+
+    void EnsureSlidesCount()
+    {
+        while (slides.Count < introPanels.Count) slides.Add(new Slide());
+    }
+
+    void AutoFindButtonsIfNeeded()
+    {
+        if (!navRoot) return;
+        var buttons = navRoot.GetComponentsInChildren<Button>(true);
+
+        if (!backButton)
+            foreach (var b in buttons)
+                if (b && (b.name.ToLower().Contains("back") || b.name.ToLower().Contains("prev"))) { backButton = b; break; }
+
+        if (!nextButton)
+            foreach (var b in buttons)
+                if (b && (b.name.ToLower().Contains("next") || b.name.ToLower().Contains("forward"))) { nextButton = b; break; }
+
+        if ((!backButton || !nextButton) && buttons.Length == 2)
+        {
+            if (!backButton) backButton = buttons[0];
+            if (!nextButton) nextButton = buttons[1];
+        }
+    }
+
+    // ========================================================================
+    // Simple reveal helpers
+    // ========================================================================
+    static List<CanvasGroup> CollectGroups(Transform root)
+    {
+        var list = new List<CanvasGroup>();
+        if (!root) return list;
+        foreach (var g in root.GetComponentsInChildren<CanvasGroup>(true))
+            list.Add(g);
+        return list;
+    }
+
+    IEnumerator PlayExclusiveSequence(Slide s)
+    {
+        var items = CollectGroups(s.exclusiveSequenceGroup);
+        foreach (var g in items)
+        {
+            if (!g) continue;
+            g.gameObject.SetActive(false);
+            SetGroupAlpha(g, 0f);
+            g.transform.localScale = Vector3.one;
+        }
+
+        float startAt = Time.unscaledTime;
+
+        foreach (var g in items)
+        {
+            if (!g) continue;
+            g.gameObject.SetActive(true);
+            yield return FadeTo(g, 1f, Mathf.Max(0f, s.seqFadeIn));
+            yield return HoldOrSkip(Mathf.Max(0f, s.seqHold));
+            yield return FadeTo(g, 0f, Mathf.Max(0f, s.seqFadeOut));
+            g.gameObject.SetActive(false);
+            if (skipping) yield break;
+        }
+
+        float elapsed = Time.unscaledTime - startAt;
+        float remain = s.minTotalDuration - elapsed;
+        if (remain > 0f) yield return HoldOrSkip(remain);
+    }
+
+    IEnumerator ShowSequential(Slide s)
+    {
+        var root = s.textGroup ? s.textGroup : s.root.transform;
+        var groups = CollectGroups(root);
+
+        foreach (var g in groups)
+        {
+            if (!g) continue;
+            g.gameObject.SetActive(false);
+            switch (defaultIn)
+            {
+                case Transition.Fade:
+                    SetGroupAlpha(g, 0f);
+                    g.transform.localScale = Vector3.one;
+                    break;
+                case Transition.Pop:
+                    SetGroupAlpha(g, 1f);
+                    g.transform.localScale = Vector3.one * (2f - popInScale);
+                    break;
+                case Transition.Instant:
+                    SetGroupAlpha(g, 1f);
+                    g.transform.localScale = Vector3.one;
+                    break;
+            }
+        }
+
+        foreach (var g in groups)
+        {
+            if (!g) continue;
+            g.gameObject.SetActive(true);
+
+            if (defaultIn == Transition.Pop)
+                yield return Pop(g, true, popDuration, popInScale);
+            else if (defaultIn == Transition.Fade)
+                yield return FadeTo(g, 1f, s.fadeIn);
+            else
+                yield return HoldOrSkip(childStagger);
+        }
+
+        if (s.hold > 0f) yield return HoldOrSkip(s.hold);
+
+        if (defaultOut == Transition.Fade)
+            foreach (var g in groups) yield return FadeTo(g, 0f, s.fadeOut);
+        else if (defaultOut == Transition.Pop)
+        {
+            foreach (var g in groups) yield return Pop(g, false, popDuration, popOutScale);
+            foreach (var g in groups) SetGroupAlpha(g, 0f);
+        }
+    }
+
     IEnumerator FadeTo(CanvasGroup g, float target, float duration)
     {
         if (!g) yield break;
-        if (duration <= 0f || skipRequested) { SetGroupAlpha(g, target); yield break; }
-
+        if (duration <= 0f || skipping) { SetGroupAlpha(g, target); yield break; }
         float start = g.alpha, t = 0f;
-        while (t < duration && !skipRequested)
+        while (t < duration && !skipping)
         {
             t += Time.unscaledDeltaTime;
             g.alpha = Mathf.Lerp(start, target, Mathf.Clamp01(t / duration));
@@ -282,63 +465,40 @@ public class IntroManager : MonoBehaviour
         SetGroupAlpha(g, target);
     }
 
+    IEnumerator Pop(CanvasGroup g, bool appearing, float duration, float targetScale)
+    {
+        if (!g) yield break;
+
+        Vector3 from = appearing ? Vector3.one * (2f - targetScale) : Vector3.one;
+        Vector3 to   = appearing ? Vector3.one : Vector3.one * targetScale;
+
+        float t = 0f;
+        while (t < duration && !skipping)
+        {
+            t += Time.unscaledDeltaTime;
+            float k = Mathf.SmoothStep(0f, 1f, t / duration);
+            g.transform.localScale = Vector3.LerpUnclamped(from, to, k);
+            yield return null;
+        }
+        g.transform.localScale = to;
+    }
+
     IEnumerator HoldOrSkip(float seconds)
     {
-        if (seconds <= 0f || skipRequested) yield break;
+        if (seconds <= 0f || skipping) yield break;
         float t = 0f;
-        while (t < seconds && !skipRequested) { t += Time.unscaledDeltaTime; yield return null; }
-    }
-
-    IEnumerator TypewriterReveal(Transform root, float perCharDelay)
-    {
-        var tmps = root.GetComponentsInChildren<TMP_Text>(true);
-        if (tmps == null || tmps.Length == 0) yield break;
-
-        int[] totals = new int[tmps.Length];
-        for (int i = 0; i < tmps.Length; i++)
+        while (t < seconds && !skipping)
         {
-            var t = tmps[i];
-            t.ForceMeshUpdate();
-            totals[i] = t.textInfo.characterCount;
-            t.maxVisibleCharacters = 0;
-        }
-
-        int longest = 0; for (int i = 0; i < totals.Length; i++) if (totals[i] > longest) longest = totals[i];
-
-        for (int c = 0; c <= longest && !skipRequested; c++)
-        {
-            for (int i = 0; i < tmps.Length; i++)
-                tmps[i].maxVisibleCharacters = Mathf.Min(c, totals[i]);
-
-            if (perCharDelay > 0f) yield return new WaitForSecondsRealtime(perCharDelay);
-            else yield return null;
+            t += Time.unscaledDeltaTime;
+            yield return null;
         }
     }
 
-    void SetGroupAlpha(CanvasGroup g, float a)
+    static void SetGroupAlpha(CanvasGroup g, float a)
     {
         g.alpha = a;
         bool on = a >= 0.999f;
         g.interactable = on;
         g.blocksRaycasts = on;
-    }
-
-    void EnsureSlidesCount()
-    {
-        while (slides.Count < introPanels.Count) slides.Add(new Slide());
-    }
-
-    static Transform FindChildByName(Transform root, string name)
-    {
-        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            if (t.name == name) return t;
-        return null;
-    }
-
-    static CanvasGroup EnsureCanvasGroup(GameObject go)
-    {
-        var cg = go.GetComponent<CanvasGroup>();
-        if (!cg) cg = go.AddComponent<CanvasGroup>();
-        return cg;
     }
 }

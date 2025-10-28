@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Langston_Data
   m_EditorClassIdentifier: 
   clientName: Langston
-  clientImage: {fileID: -5054035162421808355, guid: a1b1a3bc257bf5d45bed80ade52fe0c9, type: 3}
+  clientImage: {fileID: -5054035162421808355, guid: 5d71e7899d73e43bb9f0a8c72f719dc7, type: 3}

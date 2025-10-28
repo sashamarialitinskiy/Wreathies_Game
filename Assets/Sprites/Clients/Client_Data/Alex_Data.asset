@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Alex_Data
   m_EditorClassIdentifier: 
   clientName: Alex
-  clientImage: {fileID: 5134539684181775235, guid: 346c5727546344f469e96a5166804e32, type: 3}
+  clientImage: {fileID: 5134539684181775235, guid: 16dabc00089f74a079de8e6ebbe9372b, type: 3}

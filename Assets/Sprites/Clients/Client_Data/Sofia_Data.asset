@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Sofia_Data
   m_EditorClassIdentifier: 
   clientName: Sofia
-  clientImage: {fileID: 5536426737836828751, guid: 0390e326ab9f9204cad241a6dfe1bec1, type: 3}
+  clientImage: {fileID: 5536426737836828751, guid: af68937c97eea46d9847290c8d54f0cb, type: 3}

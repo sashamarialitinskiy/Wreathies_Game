@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: Aya_Data
   m_EditorClassIdentifier: 
   clientName: Aya
-  clientImage: {fileID: 1302723820812287101, guid: 6a9099cecb65d5b46b6bd9ee48f38b0d, type: 3}
+  clientImage: {fileID: 2028943917519797681, guid: b4faa99b95d504a3f99b1e87357b1453, type: 3}
